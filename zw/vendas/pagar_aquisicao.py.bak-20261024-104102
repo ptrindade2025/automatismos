@@ -1,0 +1,96 @@
+"""Completar e pagar uma aquisição no ZW pela UI: item, nota de encomenda, caixa e recebimento.
+
+Origem: exploração em ZW QA (zwptrindade2) com userqase01, 23/10/2026 (P0704-49, aquisição 65286493).
+VALIDADO nessa data para lojas 236/146/020. ESCREVE NA APLICAÇÃO: só com autorização explícita do Pit.
+
+- **Objetivo:** levar uma aquisição «aberta» até «entregue» com pagamento em Dinheiro.
+- **Pré-condições:** sessão ZW autenticada (o mesmo utilizador que criou a aquisição).
+  A sessão de caixa fica presa ao login; por isso abrir_caixa() faz logout da posição e volta a abri-la
+  no login atual (senão: «Não se pode autenticar em mais do que uma Sessão de Caixa»).
+- **Passos:** abrir_aq → editar() → «Adicionar» itens → marcar ArrayAssoc<id>_<empresa> → «Adicionar»
+  → «Gerar Nota Encomenda» (estado empagamento) → ícone «Efectuar recebimento» (#estado)
+  → Modo de pagamento Dinheiro (pré-selecionado) → «Gravar».
+- **Resultado esperado:** na BD (SELECT com LIMIT) estado='entregue', datapagamento e idfactura preenchidos.
+- **Casos que o usam:** P0704-49 (TC-REQ-011-11/12/13).
+"""
+import re
+from pathlib import Path
+from .criar_aquisicao import U_QA
+
+
+def _shot(pg, pasta, nome, caps):
+    p = str(Path(pasta) / nome); pg.screenshot(path=p, full_page=True); caps.append(p); return p
+
+
+def abrir_aq(pg, aq, base=U_QA):
+    pg.goto(base + "?p=aquisicao&opcao=criar"); pg.wait_for_load_state("networkidle")
+    pg.evaluate(f"$('#fastaquisicao').val('{int(aq)}'); Fast(4);")
+    pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1500)
+
+
+def trocar_loja(pg, idloja, base=U_QA):
+    """Sistema > Trocar Loja. A caixa e o recebimento são da loja da sessão, não da aquisição."""
+    pg.goto(base + "index.php?p=utilizador&opcao=trocarloja"); pg.wait_for_load_state("networkidle")
+    pg.select_option("select[name=lojas]", str(idloja))
+    pg.locator("input[value='Mudar Loja']").click(); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1000)
+    return pg.inner_text("#lojaname").strip()
+
+
+def abrir_caixa(pg, nome=None, base=U_QA):
+    """Abre a posição de caixa `nome` (por omissão, a primeira da loja da sessão)."""
+    pg.goto(base + "?p=loja&opcao=posicao"); pg.wait_for_load_state("networkidle")
+    for a in pg.locator("a[id^=a0idposicao]").all():
+        url = a.get_attribute("href").split("'")[1]
+        pg.evaluate("u => accao_remover(u)", url); pg.wait_for_timeout(1200)
+        ok = pg.locator("button:visible, a:visible", has_text=re.compile(r"^\s*OK\s*$"))
+        if ok.count(): ok.first.click()
+        pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1200)
+        pg.goto(base + "?p=loja&opcao=posicao"); pg.wait_for_load_state("networkidle")
+    if not nome:
+        nome = pg.locator("select[name=idposicao] option:not([value='0'])").first.inner_text().strip()
+    pg.select_option("select[name=idposicao]", label=nome)
+    pg.locator("input[value='Iniciar Sessão']").click(); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1200)
+    return nome if nome in pg.inner_text("body") else None
+
+
+def adicionar_item(pg, aq, item, pasta, pref, caps):
+    abrir_aq(pg, aq); pg.evaluate("editar()"); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1000)
+    pg.locator("#formlistaitems input[type=submit]").click(); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1500)
+    pg.evaluate("typeof showHideItemsEmpresa=='function' && showHideItemsEmpresa('todos')")
+    cb = pg.locator(f"input[name='ArrayAssoc[id][]'][value='{item}']").first
+    cb.scroll_into_view_if_needed(); cb.check(force=True)
+    _shot(pg, pasta, f"{pref}_3_item_marcado.png", caps)
+    pg.locator("#formlistaItens input[type=submit]").click(); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1500)
+    _shot(pg, pasta, f"{pref}_4_item_associado.png", caps)
+    return "Itens associados com sucesso" in pg.inner_text("body")
+
+
+def gerar_nota(pg, pasta, pref, caps):
+    pg.locator("input[value='Gerar Nota Encomenda']").click(); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(2000)
+    _shot(pg, pasta, f"{pref}_5_nota_encomenda.png", caps)
+    return "EMPAGAMENTO" in pg.inner_text("body").upper()
+
+
+def pagar(pg, aq, pasta, pref, caps, modo="1"):
+    abrir_aq(pg, aq)
+    pg.locator("#estado").click(); pg.wait_for_timeout(1500); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(1500)
+    if not pg.locator("#submeter_pagamento").count():
+        _shot(pg, pasta, f"{pref}_6_pagamento_bloqueado.png", caps)
+        return "bloqueado: " + re.sub(r"\s+", " ", pg.inner_text("body"))[-300:]
+    pg.select_option("select[id='idmodopagamento[0]']", modo)
+    _shot(pg, pasta, f"{pref}_6_pagamento_dinheiro.png", caps)
+    pg.click("#submeter_pagamento"); pg.wait_for_timeout(2000); pg.wait_for_load_state("networkidle"); pg.wait_for_timeout(2000)
+    _shot(pg, pasta, f"{pref}_7_depois_de_pagar.png", caps)
+    m = re.search(r"Erro[^\n]{0,200}", pg.inner_text("body"))
+    return ("erro: " + m.group(0).strip()) if m and pg.locator("#submeter_pagamento").count() else "ok"
+
+
+def verificar_pagamento(idaquisicao: int, seccao: str = "client") -> dict | None:
+    """Leitura na BD via dbq.py (secção client = BD do ZW QA)."""
+    import subprocess, os
+    q = os.path.expanduser("~/GrokBot/qa-runner")
+    sql = ("SELECT a.idaquisicao,a.estado,a.datapagamento,a.idfactura,f.numerofactura,f.dataemissao FROM aquisicao a "
+           f"LEFT JOIN factura f ON f.idfactura=a.idfactura WHERE a.idaquisicao={int(idaquisicao)} LIMIT 1")
+    r = subprocess.run([q + "/.venv/bin/python", "dbq.py", "-m", seccao, sql, "zapweb"], cwd=q, capture_output=True, text=True)
+    l = [x for x in r.stdout.splitlines() if x]
+    return dict(zip(l[0].split("\t"), l[1].split("\t"))) if len(l) > 1 else None

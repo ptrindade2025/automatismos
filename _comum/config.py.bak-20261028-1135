@@ -1,0 +1,37 @@
+"""Configuração comum da biblioteca de procedimentos de QA.
+
+Todas as credenciais vêm de variáveis de ambiente; nada é gravado em ficheiro.
+Os URL podem ser substituídos por variáveis de ambiente (ZW_URL, AW_URL).
+"""
+import os
+from pathlib import Path
+
+HOME = Path(os.path.expanduser("~"))
+QA_RUNNER = HOME / "GrokBot" / "qa-runner"
+STATE_DIR = HOME / "GrokBot" / "zw"          # storage_state do Playwright (chmod 600)
+
+ZW_URL_PP = "http://zwao.pp.zap.intra/"
+ZW_URL_QA = "http://10.151.58.27/zwptrindade2/"
+AW_URL_PP = "http://agentesarp2.pp.zap.intra"
+
+
+def env(nome: str) -> str:
+    """Devolve a variável de ambiente obrigatória ou termina com mensagem clara (sem mostrar valores)."""
+    valor = os.environ.get(nome)
+    if not valor:
+        raise SystemExit(f"Variável de ambiente em falta: {nome}")
+    return valor
+
+
+def novo_browser(p, headless: bool = True, slow_mo: int = 0):
+    """Abre o Chrome do sistema com as opções usadas nos scripts existentes."""
+    return p.chromium.launch(channel="chrome", headless=headless, slow_mo=slow_mo)
+
+
+def guardar_estado(ctx, nome: str) -> Path:
+    """Grava o storage_state com permissões 600."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    st = STATE_DIR / f"state_{nome}.json"
+    ctx.storage_state(path=str(st))
+    os.chmod(st, 0o600)
+    return st

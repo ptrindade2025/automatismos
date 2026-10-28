@@ -1,0 +1,46 @@
+# Biblioteca de procedimentos automatizados de QA
+
+Esta pasta reúne os passos de automação reutilizáveis (login, MFA, leitura de códigos, pagamentos), organizados por aplicação e por módulo. Os scripts dos projetos importam daqui e limitam-se a combinar procedimentos com os dados de cada caso.
+
+## Estrutura
+
+```
+automacao/
+├── CATALOGO.md          lista de procedimentos, origem e estado
+├── _comum/              configuração, variáveis de ambiente, leitura da BD
+├── zw/auth/             login, sessão e logout no ZW
+├── zw/vendas/           aquisições e pagamentos
+└── agentes/auth/        login e MFA no Zap Agentes
+```
+
+## Utilização num script de projeto
+
+Os scripts ficam em `projetos/<P>/scripts/` e importam a biblioteca a partir de `~/GrokBot/QA`:
+
+```python
+import sys, os
+sys.path.insert(0, os.path.expanduser("~/GrokBot/QA"))
+from playwright.sync_api import sync_playwright
+from automacao.zw.auth.login import abrir_sessao
+
+with sync_playwright() as p:
+    b, ctx, pg = abrir_sessao(p, "userqase")
+    # ... passos do caso ...
+    b.close()
+```
+
+Executar sempre com o Python do qa-runner: `~/GrokBot/qa-runner/.venv/bin/python`.
+
+## Regras
+
+1. Credenciais só em variáveis de ambiente (`ZW_USER`, `ZW_PASS`, `AW_USER`, `AW_PASS`, ou outras indicadas como parâmetro). Nunca escrever palavras-passe, PIN ou tokens em ficheiros, nem passá-los como argumentos da linha de comandos.
+2. A BD é lida apenas através de `_comum/bd.py`, que usa o `dbq.py` (só SELECT, sessão READ ONLY) e exige LIMIT.
+3. Procedimentos que escrevem nas aplicações Zap estão assinalados na ficha e só se executam com autorização explícita do Pit.
+4. Cada procedimento novo leva uma ficha (docstring) com objetivo, pré-condições, parâmetros, passos, resultado esperado e casos que o usam, e uma linha no `CATALOGO.md`.
+5. Um procedimento só passa a «validado» depois de correr com sucesso a partir da biblioteca; até lá, marcar «não validado».
+6. Não alterar os scripts originais dos projetos; extrair para aqui e refatorar.
+7. Repositório local: não fazer push.
+
+## Manutenção
+
+A manutenção cabe ao agente QA; o Aldrabao revê o código.

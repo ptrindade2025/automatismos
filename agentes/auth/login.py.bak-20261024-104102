@@ -1,0 +1,68 @@
+"""Autenticação no Zap Agentes PP (portal web).
+
+Origem: _comum/scripts/agentes-pp/login.py e visivel.py, _comum/scripts/aw_login_mfa.py,
+P0733-seguranca-zap-agentes/scripts/mfa_707_712.py (login_to_mfa, fill_code,
+associate_email_and_enter). As credenciais passaram de argumentos da linha de comandos para
+variáveis de ambiente (por omissão AW_USER e AW_PASS).
+
+## login_credenciais(pg, base_url, utilizador_env, password_env)
+- **Objetivo:** submeter utilizador e palavra-passe no ecrã /login.
+- **Pré-condições:** seller ativo; variáveis de ambiente definidas.
+- **Resultado esperado:** devolve o URL seguinte (/login/mfa se o MFA estiver ativo).
+- **Casos que o usam:** SZA-704 (credenciais inválidas), todos os casos MFA do P0733.
+
+## login_mfa_email(pg, endereco, base_url, ...)
+- **Objetivo:** autenticar com MFA pelo canal E-mail, lendo o código na BD.
+- **Pré-condições:** email já associado ao seller (se não estiver, a associação é escrita na
+  aplicação e só pode ser feita com autorização); acesso à secção zwppdb00_3306.
+- **Passos:** login_credenciais; escolher «E-mail»; «Enviar»; ler o código (ler_codigo_email);
+  preencher os 6 dígitos; «Validar».
+- **Resultado esperado:** a página sai de /login; devolve True.
+- **Casos que o usam:** SZA-701, 707, 712 (suite 263).
+
+## preencher_codigo(pg, codigo)
+- **Objetivo:** preencher o código nos campos [data-role="mfa-digit"] ou nos inputs visíveis.
+"""
+import re
+from automacao._comum.config import AW_URL_PP, env
+from automacao.agentes.auth.codigo_mfa import max_email_id, ler_codigo_email
+
+
+def login_credenciais(pg, base_url: str = AW_URL_PP, utilizador_env: str = "AW_USER",
+                      password_env: str = "AW_PASS") -> str:
+    pg.goto(base_url + "/login", wait_until="networkidle", timeout=60000)
+    pg.fill("#input-login-username", env(utilizador_env))
+    pg.fill("#input-login-password", env(password_env))
+    pg.click("#btn-login-submit")
+    pg.wait_for_load_state("networkidle")
+    pg.wait_for_timeout(1500)
+    return pg.url
+
+
+def preencher_codigo(pg, codigo: str) -> None:
+    digitos = pg.locator('[data-role="mfa-digit"]')
+    alvo = digitos if digitos.count() >= 6 else pg.locator("input:visible")
+    if alvo.count() == 1:
+        alvo.nth(0).fill(codigo)
+        return
+    for i, c in enumerate(codigo):
+        alvo.nth(i).fill(c)
+
+
+def login_mfa_email(pg, endereco: str, base_url: str = AW_URL_PP, utilizador_env: str = "AW_USER",
+                    password_env: str = "AW_PASS", espera: int = 25) -> bool:
+    url = login_credenciais(pg, base_url, utilizador_env, password_env)
+    if "/login/mfa" not in url:
+        return "/login" not in url
+    pg.locator('label:has-text("E-mail")').first.click()
+    antes = max_email_id(endereco)
+    pg.get_by_role("button", name=re.compile("Enviar", re.I)).first.click()
+    pg.wait_for_timeout(2500)
+    codigo, _ = ler_codigo_email(endereco, antes, espera)
+    if not codigo:
+        raise RuntimeError("código MFA não chegou à notification_email dentro do tempo")
+    preencher_codigo(pg, codigo)
+    pg.get_by_role("button", name=re.compile("Validar", re.I)).first.click()
+    pg.wait_for_load_state("networkidle")
+    pg.wait_for_timeout(2000)
+    return "/login" not in pg.url
