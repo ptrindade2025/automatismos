@@ -1,0 +1,15 @@
+on:
+  workflow_dispatch:
+    inputs:
+      qase_report:
+        description: 'Enables Qase reporting'
+        required: false
+      qase_project_code:
+        description: 'Qase project code'
+        required: false
+      qase_run_id:
+        description: 'Qase test run ID'
+        required: false
+      qase_run_complete:
+        description: 'Mark the run as complete after execution'
+        required: false
