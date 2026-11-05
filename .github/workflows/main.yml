@@ -13,3 +13,6 @@ on:
       qase_run_complete:
         description: 'Mark the run as complete after execution'
         required: false
+      qase_api_base_url:
+        description: 'Qase API base URL for reporting'
+        required: false
